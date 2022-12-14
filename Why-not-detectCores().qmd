@@ -1,0 +1,262 @@
+---
+title: Why You Shouldn't Use <br>parallel::detectCores() in R
+author: StatistikinDD
+subtitle: Created `r format(Sys.Date(), format = "%Y-%m-%d")`
+format: 
+  revealjs:
+    theme: simple
+    logo: StatistikinDD.png
+    highlight-style: github
+execute:
+  echo: true
+  eval: false
+editor: visual
+---
+
+## Parallelization: `detectCores()`
+
+-   `detectCores()` from Base R's `parallel` package is very popular
+
+-   ***Don't use it!!***
+
+. . .
+
+-   Short: Use `parallelly::availableCores()` instead
+
+-   Long version: Why not?
+
+. . .
+
+-   Which problems may arise if I do?
+
+## Credit to *Henrik Bengtsson*
+
+Blog post:\
+***Please Avoid `detectCores()` in your R Packages***\
+[https://www.jottr.org/2022/12/05/avoid-detectcores/](https://www.jottr.org/2022/12/05/avoid-detectcores/) <br><br>
+
+| Profile | Link                                          |
+|---------|-----------------------------------------------|
+| Website | [https://jottr.org](https://jottr.org) <br>[https://futureverse.org](https://futureverse.org) |
+| Github  | [https://github.com/HenrikBengtsson](https://github.com/HenrikBengtsson)            |
+| Twitter | @henrikbengtsson                              |
+
+## Credit to *Henrik Bengtsson* {.smaller}
+
+| Package      | Description                                                         |
+|-----------------------------|-------------------------------------------|
+| future       | Unified Parallel and Distributed Processing in R for Everyone       |
+| future.apply | Apply Function to Elements in Parallel using Futures                |
+| progressr    | An Inclusive, Unifying API for Progress Updates                     |
+| matrixStats  | Methods that Apply to Rows and Columns of Matrices (and to Vectors) |
+| parallelly   | Enhancing the parallel Package                                      |
+
+... and many more!
+
+
+## Problems with `detectCores()`
+
+(@) `detectCores()` may return a missing value
+
+(@) `detectCores()` may return one
+
+(@) `detectCores()` may return too many cores
+
+(@) `detectCores()` does not give the number of "allowed" cores
+
+::: {.notes}
+  + on a personal computer
+  + on a shared computer
+  + on a shared Compute Cluster
+  + in a Linux container using CGroups
+:::
+
+
+## 1. `detectCores()` may return a missing value 
+
+see `help("detectCores", package = "parallel")`  
+Value: An integer, ***NA if the answer is unknown***
+
+Example:
+
+. . . 
+
+```{r}
+ncores <- detectCores()
+workers <- parallel::makeCluster(ncores)
+```
+
+<div style="color: red">
+Error in makePSOCKcluster(names = spec, ...) : 
+numeric 'names' must be >= 1
+</div>
+
+. . . 
+
+Solution:
+```{r}
+#| code-line-numbers: "1"
+parallelly::availableCores()
+```
+
+
+## 2. `detectCores()` may return one
+
+<br>
+So this common usage pattern will fail:
+
+<br>
+```{r}
+ncores <- detectCores() - 1L  # may return 0
+```
+
+. . . 
+
+<br>
+Solution:
+
+```{r}
+parallelly::availableCores()  # min = 1
+parallelly::availableCores(omit = 1)  # leave one core, if possible; min = 1
+```
+
+## 3. `detectCores()` may return too many cores
+
+* R has a limit in the number of connections it can have open at any time
+* For R 4.2.2, the *theoretical* limit is **125 open connections**
+* The *practical* limit is **lower**: Connections may be in use elsewhere
+
+
+## 3. `detectCores()` may return too many cores {.smaller}
+
+Examples for a 192-core machine:
+
+```{r}
+cl <- parallel::makeCluster(detectCores())
+```
+
+<div style="color: red">
+Error in socketAccept(socket = socket, blocking = TRUE, open = "a+b")  : 
+  all connections are in use
+</div>
+
+. . . 
+
+```{r}
+cl <- parallelly::makeClusterPSOCK(detectCores())
+```
+
+<div style="color: red">
+Error: Cannot create 192 parallel PSOCK nodes. Each node needs
+one connection, but there are only 124 connections left out of
+the maximum 128 available on this R installation
+</div>
+
+
+## 3. `detectCores()` may return too many cores
+
+Our code may not work on larger, modern machines.
+
+Solution:
+
+```{r}
+parallelly::availableCores(constraints = "connections")
+```
+
+R option for maximum return value of `availableCores()`:  
+`parallelly.availableCores.system`
+
+Environment variable:  
+`R_PARALLELLY_AVAILABLECORES_SYSTEM`, e. g.
+`R_PARALLELLY_AVAILABLECORES_SYSTEM=120`
+
+
+## 4. `detectCores()` does not give the number of "allowed" cores
+
+### a) On a Personal Computer
+
+* As developers, we don't know how many cores the user wishes to set aside
+* Better to let user decide on how many cores to use for which purpose
+* **Concurrent R sessions may result in > 100% of capacity!**
+* This becomes very inefficient
+
+
+## 4. `detectCores()` does not give the number of "allowed" cores {.smaller}
+
+### b) On a Shared Computer
+
+* Running all CPU cores by default will slow everything down for **all the users**
+* User causing the problem may not be aware of it
+* May be hard to troubleshoot
+
+Solution:
+
+```{r}
+parallelly::availableCores()
+```
+
+User or system admin can limit the default number of CPU cores
+
+Environment variable:  
+`R_PARALLELLY_AVAILABLECORES_FALLBACK`, e. g. 
+`R_PARALLELLY_AVAILABLECORES_FALLBACK=2`
+
+
+## 4. `detectCores()` does not give the number of "allowed" cores {.smaller}
+
+### c) A Shared Compute Cluster with Many Machines
+
+* High-performance compute (HPC) clusters use a job scheduler
+* Slurm example:  
+  `sbatch --cpus-per-task=48 --mem=256G run_my_rscript.sh`
+* `detectCores()` does not respect job scheduler settings
+
+Solution:
+
+```{r}
+parallelly::availableCores()
+```
+
+* recognizes environment variables of common HPC schedulers, e. g.:
+* Fujitsu Technical Computing Suite (PJM), Grid Engine (SGE), Load Sharing Facility (LSF), PBS/Torque, and Simple Linux Utility for Resource Management (Slurm)
+
+
+## 4. `detectCores()` does not give the number of "allowed" cores {.smaller}
+
+### d) Running R via CGroups in a Linux container
+
+* croups = control groups: process gets allotted a certain number of cores
+* Example: `docker run --cpuset-cpus=0-2,8` or `docker run --cpu=3.4 …`
+* Problem: `detectCores()` returns CPUs of hardware, not of cgroup!
+* Example: 96 cores, 8 cores per cgroup: 96 workers fight for resources of 8 cores; **very inefficient**
+* **This can happen on Posit Cloud!**
+
+Solution:
+
+```{r}
+parallelly::availableCores()
+```
+
+
+## Henrik Bengtsson's Recommendation
+
+* Safest way: design R package to run sequentially by default
+* Let the user decide on number of parallel workers to use
+
+* Second-best alternative: Replace `detectCores()` with **`parallelly::availableCores()`**
+
+For more details, see [https://parallelly.futureverse.org/](https://parallelly.futureverse.org/)
+
+
+## Thanks!
+
+<br>
+
+### Youtube: StatistikinDD
+
+### Twitter: @StatistikinDD
+
+### github: fjodor
+
+<br>
+Presentation created using **quarto**, [https://quarto.org/](https://quarto.org/)
